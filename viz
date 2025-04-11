@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Flipmo Visualizer v.01</title>
+  <style>
+    body { margin: 0; background: #000; overflow: hidden; font-family: Arial, sans-serif; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+    #upload-container {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      text-align: center; z-index: 10; color: white;
+    }
+    #upload-title { font-size: 24px; margin-bottom: 20px; }
+    .upload-button {
+      margin: 5px; padding: 10px 20px; background: #222;
+      border: 1px solid #555; color: #0f0; cursor: pointer;
+      font-family: 'Courier New', Courier, monospace;
+    }
+    .upload-button:hover { background: #444; }
+  </style>
+</head>
+<body>
+<div id="upload-container">
+  <div id="upload-title">Flipmo Visualizer v.01</div>
+  <button class="upload-button" id="upload-file">Upload File</button>
+  <button class="upload-button" id="use-mic">Use Microphone</button>
+  <input type="file" id="file-input" accept="audio/*" hidden>
+</div>
+<canvas id="visualizer"></canvas>
+
+<script>
+const canvas = document.getElementById('visualizer');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+let audioContext, analyser, source, audio, responseMultiplier = 1;
+let hueBass = 240, hueMid = 120, hueHigh = 60;
+
+function drawHaze(intensity) {
+  ctx.fillStyle = `rgba(255, 255, 255, ${0.002 + intensity * 0.005})`;
+  for (let i = 0; i < 800; i++) {
+    ctx.beginPath();
+    ctx.arc(Math.random() * canvas.width, Math.random() * canvas.height, Math.random() * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function randomHue() {
+  return Math.floor(Math.random() * 360);
+}
+
+function initAudio(input) {
+  if(audioContext) audioContext.close();
+  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  analyser = audioContext.createAnalyser();
+
+  if (input instanceof MediaStream) {
+    source = audioContext.createMediaStreamSource(input);
+  } else {
+    audio = new Audio(URL.createObjectURL(input));
+    audio.crossOrigin = "anonymous";
+    audio.play();
+    source = audioContext.createMediaElementSource(audio);
+  }
+
+  source.connect(analyser);
+  analyser.connect(audioContext.destination);
+
+  analyser.fftSize = 1024;
+  const bufferLength = analyser.frequencyBinCount;
+  const dataArray = new Uint8Array(bufferLength);
+
+  function draw() {
+    requestAnimationFrame(draw);
+    analyser.getByteFrequencyData(dataArray);
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    let bass = dataArray.slice(0, bufferLength * 0.1).reduce((a, b) => a + b, 0) / (bufferLength * 0.1);
+    let mid = dataArray.slice(bufferLength * 0.1, bufferLength * 0.5).reduce((a, b) => a + b, 0) / (bufferLength * 0.4);
+    let high = dataArray.slice(bufferLength * 0.5).reduce((a, b) => a + b, 0) / (bufferLength * 0.5);
+
+    drawHaze((bass + mid + high) / 765);
+
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+
+    let maxRadius = Math.min(canvas.width, canvas.height) / 2 * responseMultiplier;
+
+    function drawGradientCircle(radius, hue, alpha, dynamicMultiplier) {
+      const gradient = ctx.createRadialGradient(centerX, centerY, radius * 0.4, centerX, centerY, radius);
+      gradient.addColorStop(0, `hsla(${hue}, 100%, 50%, ${alpha})`);
+      gradient.addColorStop(1, `hsla(${hue}, 100%, 50%, 0)`);
+
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius * dynamicMultiplier, 0, Math.PI * 2);
+      ctx.fillStyle = gradient;
+      ctx.fill();
+    }
+
+    drawGradientCircle(bass / 255 * maxRadius, hueBass, 0.6, 1 + Math.sin(Date.now() * 0.005) * 0.1);
+    drawGradientCircle(mid / 255 * maxRadius * 0.6, hueMid, 0.5, 1 + Math.cos(Date.now() * 0.006) * 0.15);
+    drawGradientCircle(high / 255 * maxRadius * 0.3, hueHigh, 0.4, 1 + Math.sin(Date.now() * 0.007) * 0.2);
+  }
+
+  draw();
+}
+
+document.getElementById('upload-file').onclick = () => document.getElementById('file-input').click();
+document.getElementById('file-input').onchange = function() {
+  if (this.files[0]) {
+    document.getElementById('upload-container').style.display = 'none';
+    initAudio(this.files[0]);
+  }
+};
+
+document.getElementById('use-mic').onclick = () => {
+  navigator.mediaDevices.getUserMedia({ audio: true })
+    .then(stream => {
+      document.getElementById('upload-container').style.display = 'none';
+      initAudio(stream);
+    }).catch(() => alert('Microphone access denied or unavailable.'));
+};
+
+window.onresize = () => {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+};
+
+window.onkeydown = (e) => {
+  if (e.key >= 1 && e.key <= 9) {
+    responseMultiplier = e.key / 5;
+  } else if (e.key.match(/^[a-z]$/i)) {
+    hueBass = randomHue();
+    hueMid = randomHue();
+    hueHigh = randomHue();
+  }
+};
+</script>
+</body>
+</html>
+
