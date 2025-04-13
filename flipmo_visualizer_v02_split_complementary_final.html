@@ -1,0 +1,184 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Flipmo Visualizer v.02+ Final Split Complementary</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: black; color: white; font-family: 'Helvetica Neue', sans-serif; text-align: center; }
+    #upload-screen { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: black; z-index: 10; }
+    #upload-screen h1 { font-size: 48px; margin-bottom: 40px; letter-spacing: 2px; }
+    #button-group { display: flex; gap: 20px; margin-bottom: 20px; }
+    #audio-upload, #mic-button, #start-button { padding: 12px 20px; background: none; border: 2px solid white; color: white; font-size: 18px; cursor: pointer; transition: 0.3s; }
+    #audio-upload:hover, #mic-button:hover, #start-button:hover { background: white; color: black; }
+    #upload-screen p { margin-top: 20px; font-size: 18px; color: #aaa; }
+    #start-button { margin-top: 20px; display: none; }
+  </style>
+</head>
+<body>
+
+<div id="upload-screen">
+  <h1>Flipmo Visualizer v.02+</h1>
+  <div id="button-group">
+    <input type="file" id="audio-upload" accept="audio/*">
+    <button id="mic-button">Use Microphone</button>
+  </div>
+  <button id="start-button">Start Visualizer</button>
+  <p>Choose a file or use your mic</p>
+</div>
+
+<canvas id="visualizer"></canvas>
+
+<script>
+let audioContext, analyser, source, dataArray, audio;
+let canvas = document.getElementById('visualizer');
+let ctx = canvas.getContext('2d');
+let width, height;
+
+let lowSensitivity = 1.0;
+let midSensitivity = 1.0;
+let highSensitivity = 1.0;
+let globalScale = 1.0;
+let hazeIntensity = 0.15;
+let currentHueSet = [200, 20, 140]; // split complementary default
+
+function resize() {
+  width = window.innerWidth;
+  height = window.innerHeight;
+  canvas.width = width;
+  canvas.height = height;
+}
+window.addEventListener('resize', resize);
+resize();
+
+const uploadInput = document.getElementById('audio-upload');
+const startButton = document.getElementById('start-button');
+
+uploadInput.addEventListener('change', function() {
+  const file = uploadInput.files[0];
+  if (file) {
+    audio = new Audio();
+    audio.src = URL.createObjectURL(file);
+    audio.crossOrigin = "anonymous";
+    audio.loop = true;
+    startButton.style.display = 'inline-block';
+  }
+});
+
+startButton.addEventListener('click', function() {
+  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  analyser = audioContext.createAnalyser();
+  analyser.fftSize = 512;
+  dataArray = new Uint8Array(analyser.frequencyBinCount);
+  source = audioContext.createMediaElementSource(audio);
+  source.connect(analyser);
+  analyser.connect(audioContext.destination);
+
+  audio.play();
+  document.getElementById('upload-screen').style.display = 'none';
+  animate();
+});
+
+document.getElementById('mic-button').addEventListener('click', function() {
+  navigator.mediaDevices.getUserMedia({ audio: true })
+    .then(stream => {
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 512;
+      dataArray = new Uint8Array(analyser.frequencyBinCount);
+      source = audioContext.createMediaStreamSource(stream);
+      source.connect(analyser);
+      analyser.connect(audioContext.destination);
+      document.getElementById('upload-screen').style.display = 'none';
+      animate();
+    })
+    .catch(err => alert('Microphone access denied.'));
+});
+
+function animate() {
+  requestAnimationFrame(animate);
+  analyser.getByteFrequencyData(dataArray);
+
+  let low = average(dataArray.slice(0, dataArray.length / 3)) * lowSensitivity;
+  let mid = average(dataArray.slice(dataArray.length / 3, 2 * dataArray.length / 3)) * midSensitivity;
+  let high = average(dataArray.slice(2 * dataArray.length / 3)) * highSensitivity;
+
+  ctx.fillStyle = `hsla(0, 0%, 0%, ${hazeIntensity})`;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.save();
+  ctx.translate(width / 2, height / 2);
+  ctx.scale(globalScale, globalScale);
+
+  drawGradientCircle(0, 0, low, currentHueSet[0]);
+  drawGradientCircle(0, 0, mid, currentHueSet[1]);
+  drawGradientCircle(0, 0, high, currentHueSet[2]);
+
+  ctx.restore();
+}
+
+function drawGradientCircle(x, y, amp, hue) {
+  let gradient = ctx.createRadialGradient(x, y, 0, x, y, amp / 2);
+  gradient.addColorStop(0, `hsla(${hue}, 100%, 50%, 0.6)`);
+  gradient.addColorStop(1, `hsla(${hue}, 100%, 50%, 0)`);
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.arc(x, y, amp / 2, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function average(arr) {
+  return arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+
+if (navigator.requestMIDIAccess) {
+  navigator.requestMIDIAccess().then((midiAccess) => {
+    for (let input of midiAccess.inputs.values()) {
+      input.onmidimessage = handleMIDIMessage;
+    }
+  });
+}
+
+function handleMIDIMessage(event) {
+  const [status, data1, data2] = event.data;
+  if (status === 176) {
+    if (data1 === 1) lowSensitivity = (data2 / 127) * 3;
+    if (data1 === 2) midSensitivity = (data2 / 127) * 3;
+    if (data1 === 3) highSensitivity = (data2 / 127) * 3;
+    if (data1 === 4) globalScale = (data2 / 127) * 2 + 0.5;
+    if (data1 === 6) hazeIntensity = (data2 / 127) * 0.5; // Knob 6 = haze control
+  } else if (status === 144) {
+    if (event.data[1] > 43) { triggerNewColorSet(); }
+    else { setGlobalScaleByPad(event.data[1]); }
+  }
+}
+
+function setGlobalScaleByPad(note) {
+  const padScales = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5];
+  globalScale = padScales[note - 36] || 1.0;
+}
+
+function triggerNewColorSet() {
+  const base = Math.random() * 360;
+  currentHueSet = [
+    base % 360,
+    (base + 150) % 360, // split complement 1
+    (base + 210) % 360  // split complement 2
+  ];
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.code.startsWith('Key')) {
+    triggerNewColorSet();
+  }
+  if (e.code.startsWith('Digit')) {
+    let num = parseInt(e.key);
+    if (!isNaN(num)) {
+      globalScale = 0.5 + (num - 1) * 0.25;
+    }
+  }
+});
+</script>
+
+</body>
+</html>
